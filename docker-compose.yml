@@ -1,0 +1,15 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: tollgate-db
+    environment:
+      POSTGRES_USER: tollgate
+      POSTGRES_PASSWORD: tollgate_dev_password
+      POSTGRES_DB: tollgate
+    ports:
+      - "5433:5432"
+    volumes:
+      - tollgate_pgdata:/var/lib/postgresql/data
+
+volumes:
+  tollgate_pgdata:
