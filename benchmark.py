@@ -14,18 +14,14 @@ RESULTS_FILE = Path("benchmark_results.json")
 
 UNIQUE_QUERIES = [
     "What is the capital of France?",
-    "What is the capital of Germany?",
     "Who wrote Romeo and Juliet?",
     "Define recursion in programming.",
-    "What is photosynthesis?",
     "Explain in depth how neural networks learn through backpropagation.",
     "Compare and contrast SQL and NoSQL databases.",
-    "Walk me through how a hash table works internally.",
-    "Analyze the trade-offs between REST and GraphQL APIs.",
     "Design a rate limiter for a public API.",
 ]
 
-REPEATS = UNIQUE_QUERIES[:1] + UNIQUE_QUERIES[5:6]
+REPEATS = UNIQUE_QUERIES[:1] + UNIQUE_QUERIES[3:4]
 BENCHMARK_QUERIES = UNIQUE_QUERIES + REPEATS
 
 
@@ -35,16 +31,17 @@ def load_results() -> dict:
     return {"gateway": {}, "baseline": {}}
 
 
-def save_result(results: dict, pass_name: str, query: str, cost: float, latency: int) -> None:
-    results[pass_name][query] = {"cost": cost, "latency": latency}
+def save_result(results: dict, pass_name: str, key: str, query: str, cost: float, latency: int) -> None:
+    results[pass_name][key] = {"query": query, "cost": cost, "latency": latency}
     RESULTS_FILE.write_text(json.dumps(results, indent=2))
 
 
 async def run_gateway_pass(results: dict) -> None:
     async with httpx.AsyncClient(timeout=60) as client:
-        for query in BENCHMARK_QUERIES:
-            if query in results["gateway"]:
-                print(f"  Already done, skipping: {query[:40]}...")
+        for i, query in enumerate(BENCHMARK_QUERIES):
+            key = str(i)
+            if key in results["gateway"]:
+                print(f"  Already done, skipping index {i}: {query[:40]}...")
                 continue
 
             try:
@@ -61,16 +58,28 @@ async def run_gateway_pass(results: dict) -> None:
             else:
                 cost = calculate_cost(model, data["input_tokens"], data["output_tokens"])
 
-            save_result(results, "gateway", query, cost, data["latency_ms"])
+            save_result(results, "gateway", key, query, cost, data["latency_ms"])
             await asyncio.sleep(4)
 
 
 async def run_naive_baseline_pass(results: dict) -> None:
     gemini = GeminiProvider()
+    seen_costs: dict[str, dict] = {}
 
-    for query in BENCHMARK_QUERIES:
-        if query in results["baseline"]:
-            print(f"  Already done, skipping: {query[:40]}...")
+    for record in results["baseline"].values():
+        seen_costs.setdefault(record["query"], record)
+
+    for i, query in enumerate(BENCHMARK_QUERIES):
+        key = str(i)
+        if key in results["baseline"]:
+            print(f"  Already done, skipping index {i}: {query[:40]}...")
+            continue
+
+        if query in seen_costs:
+            prior = seen_costs[query]
+            print(f"  Repeat — reusing first occurrence's real cost (no cache in naive baseline, "
+                  f"but avoids re-spending quota on an identical question): {query[:40]}...")
+            save_result(results, "baseline", key, query, prior["cost"], prior["latency"])
             continue
 
         try:
@@ -83,7 +92,8 @@ async def run_naive_baseline_pass(results: dict) -> None:
             continue
 
         cost = calculate_cost("gemini/gemini-2.5-flash", result.input_tokens, result.output_tokens)
-        save_result(results, "baseline", query, cost, elapsed_ms)
+        save_result(results, "baseline", key, query, cost, elapsed_ms)
+        seen_costs[query] = {"query": query, "cost": cost, "latency": elapsed_ms}
         await asyncio.sleep(15)
 
 
@@ -99,13 +109,13 @@ async def main():
     print("Pass 2: naive baseline (frontier-only, no cache)...")
     await run_naive_baseline_pass(results)
 
+    total = len(BENCHMARK_QUERIES)
     gateway_done = len(results["gateway"])
     baseline_done = len(results["baseline"])
-    total = len(BENCHMARK_QUERIES)
 
     if gateway_done < total or baseline_done < total:
         print(f"\nIncomplete: gateway {gateway_done}/{total}, baseline {baseline_done}/{total}.")
-        print("Run the script again later to fill in the rest — already-completed queries won't be repeated.")
+        print("Run the script again — already-completed queries won't be repeated.")
         return
 
     gateway_cost = sum(r["cost"] for r in results["gateway"].values())

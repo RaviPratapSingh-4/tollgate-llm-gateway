@@ -5,6 +5,8 @@ from app.providers.base import ProviderResponse
 
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
+SYSTEM_PROMPT = "Be concise: 1-3 sentences, unless code or an in-depth explanation is explicitly requested."
+
 
 class GroqProvider:
     def __init__(self):
@@ -18,8 +20,11 @@ class GroqProvider:
 
         response = await self.client.chat.completions.create(
             model=GROQ_MODEL,
-            messages=[{"role": "user", "content": query}],
-            max_tokens=500,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": query},
+            ],
+            max_tokens=250,
         )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
